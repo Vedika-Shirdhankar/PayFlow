@@ -295,5 +295,3 @@ Stop everything with `Ctrl+C`, then `npm run infra:down`.
 ## 📄 License
 
 Add a license of your choice (e.g. MIT) before publishing.
-
- 
