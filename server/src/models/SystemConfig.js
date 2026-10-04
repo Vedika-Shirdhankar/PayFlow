@@ -15,6 +15,30 @@ const systemConfigSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    simulateNetworkError: {
+      type: Boolean,
+      default: false,
+    },
+    simulateDbError: {
+      type: Boolean,
+      default: false,
+    },
+    simulateTimeout: {
+      type: Boolean,
+      default: false,
+    },
+    simulateServerError: {
+      type: Boolean,
+      default: false,
+    },
+    simulateWorkerCrash: {
+      type: Boolean,
+      default: false,
+    },
+    simulateOutage: {
+      type: Boolean,
+      default: false,
+    },
     maxAttempts: {
       type: Number,
       default: 3,

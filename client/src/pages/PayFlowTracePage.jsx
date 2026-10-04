@@ -31,8 +31,18 @@ const PayFlowTracePage = () => {
     try {
       const res = await api.get(`/payments/${paymentId}/trace`);
       setTraceData(res.data);
+      setError('');
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to load PayFlow Trace');
+      if (!navigator.onLine || err.code === 'ERR_NETWORK' || !err.response || err.response?.status === 503) {
+        setError('Network Error: Server or database is unreachable. Please check your internet connection.');
+      } else {
+        const rawMsg = err.response?.data?.error || err.userMessage || 'Failed to load PayFlow Trace';
+        if (rawMsg.includes('token') && (!navigator.onLine || !err.response)) {
+          setError('Network Error: Server or database is unreachable. Please check your connection.');
+        } else {
+          setError(rawMsg);
+        }
+      }
     } finally {
       setLoading(false);
     }
@@ -59,22 +69,33 @@ const PayFlowTracePage = () => {
     );
   }
 
-  if (error || !traceData) {
+  if (!traceData) {
     return (
       <div className="p-6 bg-slate-900 border border-slate-800 rounded-2xl text-center space-y-4 max-w-lg mx-auto">
         <AlertCircle className="w-8 h-8 text-rose-400 mx-auto" />
-        <div className="text-rose-400 font-semibold text-sm">{error || 'Trace data unavailable'}</div>
-        <Link to="/payments" className="inline-block text-xs text-blue-400 hover:underline font-mono">
-          ← Back to Payments List
-        </Link>
+        <div className="text-rose-400 font-semibold text-sm">{error || 'Trace data unavailable — please check network connection'}</div>
+        <button
+          onClick={fetchTrace}
+          className="px-3 py-1.5 bg-rose-500/20 text-rose-300 rounded text-xs font-mono font-bold hover:bg-rose-500/30"
+        >
+          Retry Connection
+        </button>
+        <div>
+          <Link to="/payments" className="inline-block text-xs text-blue-400 hover:underline font-mono">
+            ← Back to Payments List
+          </Link>
+        </div>
       </div>
     );
   }
 
   const { payment, job, workerStatus, timeline, integrity } = traceData;
 
+  const correlationId = payment?.correlationId || (timeline[0]?.details?.correlationId) || null;
+
   const getEventCardConfig = (evt) => {
     const action = evt.event;
+    const isSimulated = evt.details?.isSimulated || (evt.message || '').includes('[SIM]') || (evt.error || '').includes('[SIM]');
     switch (action) {
       case 'REQUESTED':
       case 'PAYMENT_CREATED':
@@ -84,6 +105,7 @@ const PayFlowTracePage = () => {
           dotStyle: 'bg-blue-400',
           title: 'API Request Received',
           message: evt.message || 'API received payment request & verified wallet balance synchronously.',
+          isSimulated,
         };
       case 'PAYMENT_REPLAYED':
         return {
@@ -92,6 +114,7 @@ const PayFlowTracePage = () => {
           dotStyle: 'bg-violet-400',
           title: 'Admin Replay',
           message: evt.message || 'Admin re-queued this failed payment for another attempt.',
+          isSimulated,
         };
       case 'WORKER_RECOVERY':
         return {
@@ -100,6 +123,7 @@ const PayFlowTracePage = () => {
           dotStyle: 'bg-teal-400',
           title: 'Orphaned Payment Recovered',
           message: evt.message || 'Reconciler re-enqueued a payment that had no live job.',
+          isSimulated,
         };
       case 'QUEUED':
       case 'PAYMENT_QUEUED':
@@ -109,6 +133,7 @@ const PayFlowTracePage = () => {
           dotStyle: 'bg-amber-400',
           title: 'PaymentJob Enqueued',
           message: evt.message || 'PaymentJob enqueued to BullMQ / Redis queue.',
+          isSimulated,
         };
       case 'WORKER_CLAIMED':
         return {
@@ -117,6 +142,7 @@ const PayFlowTracePage = () => {
           dotStyle: 'bg-indigo-400',
           title: 'Job Claimed by BullMQ Worker',
           message: evt.message || `Worker ${evt.workerId || 'BullMQ worker'} claimed the job from Redis queue.`,
+          isSimulated,
         };
       case 'PROCESSING':
       case 'PAYMENT_PROCESSING':
@@ -126,14 +152,16 @@ const PayFlowTracePage = () => {
           dotStyle: 'bg-cyan-400 animate-pulse',
           title: evt.attempt > 1 ? `Processing Retry (Attempt #${evt.attempt})` : 'Processing Payment Transaction',
           message: evt.message || `Worker is executing payment transaction (Attempt #${evt.attempt || 1}).`,
+          isSimulated,
         };
       case 'WORKER_FAILURE':
         return {
-          label: 'WORKER FAILURE',
-          badgeStyle: 'bg-rose-500/10 text-rose-400 border-rose-500/30',
-          dotStyle: 'bg-rose-500',
-          title: 'Worker Exception Triggered',
-          message: evt.message || 'Controlled worker failure occurred before transaction commit.',
+          label: isSimulated ? '[SIM] WORKER FAILURE' : 'WORKER FAILURE',
+          badgeStyle: isSimulated ? 'bg-amber-500/10 text-amber-400 border-amber-500/30' : 'bg-rose-500/10 text-rose-400 border-rose-500/30',
+          dotStyle: isSimulated ? 'bg-amber-500' : 'bg-rose-500',
+          title: isSimulated ? 'Simulated Failure (Injected)' : 'Worker Exception Triggered',
+          message: evt.message || 'Worker exception occurred before transaction commit.',
+          isSimulated,
         };
       case 'RETRY_SCHEDULED':
       case 'PAYMENT_RETRY':
@@ -143,6 +171,7 @@ const PayFlowTracePage = () => {
           dotStyle: 'bg-purple-400',
           title: 'Exponential Backoff Scheduled',
           message: evt.message || 'Job scheduled for retry using exponential backoff.',
+          isSimulated,
         };
       case 'SUCCESS':
       case 'PAYMENT_SUCCESS':
@@ -152,15 +181,17 @@ const PayFlowTracePage = () => {
           dotStyle: 'bg-emerald-400',
           title: 'Transaction Committed',
           message: evt.message || 'Atomic MongoDB transaction committed successfully.',
+          isSimulated,
         };
       case 'FAILED':
       case 'PAYMENT_FAILED':
         return {
-          label: 'FAILED',
+          label: isSimulated ? '[SIM] FAILED' : 'FAILED',
           badgeStyle: 'bg-rose-500/10 text-rose-400 border-rose-500/30',
           dotStyle: 'bg-rose-400',
-          title: 'Payment Permanently Failed',
+          title: isSimulated ? 'Simulated Failure (Permanent After Retries)' : 'Payment Permanently Failed',
           message: evt.message || 'Payment permanently failed after exhausting retry attempts.',
+          isSimulated,
         };
       default:
         return {
@@ -169,6 +200,7 @@ const PayFlowTracePage = () => {
           dotStyle: 'bg-slate-400',
           title: action,
           message: evt.message || 'Queue transition event recorded.',
+          isSimulated,
         };
     }
   };
@@ -196,8 +228,13 @@ const PayFlowTracePage = () => {
               </span>
             </div>
             <p className="text-slate-400 text-xs mt-0.5 font-mono">
-              Trace ID: {payment.id}
+              Payment ID: {payment.id}
             </p>
+            {correlationId && (
+              <p className="text-xs mt-0.5 font-mono text-slate-500">
+                Correlation ID: <span className="text-cyan-400">{correlationId}</span>
+              </p>
+            )}
           </div>
         </div>
 
@@ -209,6 +246,21 @@ const PayFlowTracePage = () => {
           Refresh Trace
         </button>
       </div>
+
+      {error && (
+        <div className="p-4 bg-rose-500/10 border border-rose-500/30 rounded-2xl text-rose-400 text-xs font-mono flex items-center justify-between shadow-lg">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+            <span>{error}</span>
+          </div>
+          <button
+            onClick={fetchTrace}
+            className="px-3 py-1 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 rounded-lg font-bold"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* Requirement #5: Asynchronous HTTP 202 Notice Banner */}
       <div className="bg-gradient-to-r from-blue-950/70 via-slate-900 to-indigo-950/70 border border-cyan-500/30 rounded-2xl p-5 font-mono text-xs space-y-2 shadow-xl">
@@ -352,8 +404,21 @@ const PayFlowTracePage = () => {
                       <span className={`px-2.5 py-0.5 rounded border text-[11px] font-bold ${card.badgeStyle}`}>
                         {card.label}
                       </span>
+                      {card.isSimulated && (
+                        <span className="px-2 py-0.5 rounded border text-[10px] font-bold bg-amber-500/10 text-amber-400 border-amber-500/30">
+                          ⚡ SIMULATED
+                        </span>
+                      )}
                       {evt.attempt && (
                         <span className="text-amber-400 font-bold text-[11px]">Attempt #{evt.attempt}</span>
+                      )}
+                      {evt.details?.errorCode && (
+                        <span className="px-2 py-0.5 rounded border text-[10px] font-bold bg-rose-500/10 text-rose-400 border-rose-500/30">
+                          {evt.details.errorCode}
+                        </span>
+                      )}
+                      {evt.details?.processingTimeMs && (
+                        <span className="text-slate-500 text-[10px]">⏱ {evt.details.processingTimeMs}ms</span>
                       )}
                     </div>
                     <span className="text-slate-500 text-[11px]">{new Date(evt.timestamp).toLocaleString()}</span>
@@ -364,16 +429,27 @@ const PayFlowTracePage = () => {
 
                   <div className="flex flex-wrap items-center gap-4 text-slate-400 text-[11px] pt-2 border-t border-slate-900">
                     {evt.workerId && (
-                      <span>Worker Node: <strong className="text-purple-300">{evt.workerId}</strong></span>
+                      <span>Worker: <strong className="text-purple-300">{evt.workerId}</strong></span>
                     )}
                     {evt.details?.jobId && (
                       <span>Job ID: <strong className="text-slate-300">{evt.details.jobId}</strong></span>
+                    )}
+                    {evt.details?.correlationId && (
+                      <span>Corr: <strong className="text-cyan-400">{evt.details.correlationId}</strong></span>
+                    )}
+                    {evt.details?.retryDelayMs && (
+                      <span>Retry delay: <strong className="text-purple-300">{evt.details.retryDelayMs}ms</strong></span>
                     )}
                   </div>
 
                   {evt.error && (
                     <div className="p-3 bg-rose-500/10 border border-rose-500/20 rounded-lg text-rose-400 text-[11px] font-sans mt-2">
-                      <strong>Error Details:</strong> {evt.error}
+                      <strong>Error:</strong> {evt.error}
+                      {evt.details?.errorCategory && (
+                        <span className="ml-2 px-1.5 py-0.5 bg-rose-500/20 rounded text-[10px] font-mono uppercase">
+                          [{evt.details.errorCategory}]
+                        </span>
+                      )}
                     </div>
                   )}
                 </div>

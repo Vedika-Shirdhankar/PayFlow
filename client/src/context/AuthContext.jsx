@@ -20,11 +20,21 @@ export const AuthProvider = ({ children }) => {
       localStorage.setItem('payflow_user', JSON.stringify(res.data.user));
     } catch (err) {
       console.error('Failed to fetch profile:', err);
-      setUser(null);
-      setWallet(null);
-      localStorage.removeItem('payflow_token');
-      localStorage.removeItem('payflow_user');
-      disconnectSocket();
+      const status = err.response?.status;
+      const code = err.response?.data?.code;
+      const isGenuineAuthFailure =
+        status === 401 && (code === 'TOKEN_INVALID' || code === 'USER_NOT_FOUND');
+
+      if (isGenuineAuthFailure) {
+        setUser(null);
+        setWallet(null);
+        localStorage.removeItem('payflow_token');
+        localStorage.removeItem('payflow_user');
+        disconnectSocket();
+      } else {
+        // Network drop or DB outage: keep saved user in state so session remains active
+        console.warn('Network or DB error during profile fetch; preserving offline session state.');
+      }
     } finally {
       setLoading(false);
     }

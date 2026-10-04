@@ -38,9 +38,41 @@ const paymentSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+    errorCode: {
+      type: String,
+      default: null,
+    },
+    errorCategory: {
+      type: String,
+      default: null,
+    },
+    correlationId: {
+      type: String,
+      default: null,
+    },
     completedAt: {
       type: Date,
       default: null,
+    },
+    // User annotations
+    note: {
+      type: String,
+      default: null,
+      maxlength: [200, 'Note cannot exceed 200 characters'],
+    },
+    tags: {
+      type: [String],
+      default: [],
+      validate: {
+        validator: (arr) => arr.length <= 5 && arr.every((t) => t.length <= 30),
+        message: 'Maximum 5 tags, each up to 30 characters',
+      },
+    },
+    // Refund tracking
+    refundStatus: {
+      type: String,
+      enum: ['NONE', 'PENDING', 'APPROVED', 'REJECTED', 'COMPLETED'],
+      default: 'NONE',
     },
   },
   {

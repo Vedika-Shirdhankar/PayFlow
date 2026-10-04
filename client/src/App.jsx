@@ -15,6 +15,8 @@ import PaymentDetailsPage from './pages/PaymentDetailsPage';
 import PayFlowTracePage from './pages/PayFlowTracePage';
 import AdminDashboardPage from './pages/AdminDashboardPage';
 import AuditLogsPage from './pages/AuditLogsPage';
+import SystemTopologyPage from './pages/SystemTopologyPage';
+import RefundsPage from './pages/RefundsPage';
 
 const ProtectedLayout = () => {
   const { user, loading } = useAuth();
@@ -69,11 +71,13 @@ function App() {
             <Route path="/payments" element={<PaymentHistoryPage />} />
             <Route path="/payments/:paymentId" element={<PaymentDetailsPage />} />
             <Route path="/payments/:paymentId/trace" element={<PayFlowTracePage />} />
+            <Route path="/refunds" element={<RefundsPage />} />
 
             {/* Admin Routes */}
             <Route element={<AdminRoute />}>
               <Route path="/admin" element={<AdminDashboardPage />} />
               <Route path="/admin/audit-logs" element={<AuditLogsPage />} />
+              <Route path="/admin/topology" element={<SystemTopologyPage />} />
             </Route>
           </Route>
 

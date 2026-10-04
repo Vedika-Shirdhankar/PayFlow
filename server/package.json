@@ -6,7 +6,7 @@
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "worker": "node src/worker.js",
-    "seed": "node src/scripts/seed.js",
+    "seed": "node scripts/seed.js",
     "test": "node --test",
     "check:db": "node src/scripts/check-db.js"
   },

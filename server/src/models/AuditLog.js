@@ -2,6 +2,11 @@ const mongoose = require('mongoose');
 
 const auditLogSchema = new mongoose.Schema(
   {
+    correlationId: {
+      type: String,
+      default: null,
+      index: true,
+    },
     actorId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
@@ -14,30 +19,6 @@ const auditLogSchema = new mongoose.Schema(
     action: {
       type: String,
       required: true,
-      enum: [
-        'USER_REGISTERED',
-        'USER_LOGIN',
-        'WALLET_CREATED',
-        'WALLET_ADJUSTED',
-        'REQUESTED',
-        'QUEUED',
-        'WORKER_CLAIMED',
-        'PROCESSING',
-        'RETRY_SCHEDULED',
-        'SUCCESS',
-        'FAILED',
-        'WORKER_FAILURE',
-        'WORKER_RECOVERY',
-        'SYSTEM_CONFIG_UPDATE',
-        'PAYMENT_CREATED',
-        'PAYMENT_QUEUED',
-        'PAYMENT_PROCESSING',
-        'PAYMENT_RETRY',
-        'PAYMENT_SUCCESS',
-        'PAYMENT_FAILED',
-        'PAYMENT_REPLAYED',
-        'DEAD_LETTER',
-      ],
     },
     entityType: {
       type: String,
@@ -59,5 +40,6 @@ const auditLogSchema = new mongoose.Schema(
 
 auditLogSchema.index({ createdAt: -1 });
 auditLogSchema.index({ action: 1 });
+auditLogSchema.index({ entityId: 1 });
 
 module.exports = mongoose.model('AuditLog', auditLogSchema);

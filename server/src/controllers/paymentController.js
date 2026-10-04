@@ -4,16 +4,18 @@ const User = require('../models/User');
 const Wallet = require('../models/Wallet');
 const AuditLog = require('../models/AuditLog');
 const Transaction = require('../models/Transaction');
+const TransactionLimit = require('../models/TransactionLimit');
 const WorkerHeartbeat = require('../models/WorkerHeartbeat');
 const { addPaymentJob, getQueueStats } = require('../queue/paymentQueue');
 const { publishEvent } = require('../config/redis');
 const { parseAmount, validateIdempotencyKey } = require('../utils/validation');
+const { isNetworkOrDbConnectionError } = require('../utils/errors');
 const mongoose = require('mongoose');
 
 const createPayment = async (req, res) => {
   try {
     const senderId = req.user.userId;
-    const { recipientId, amount, idempotencyKey } = req.body;
+    const { recipientId, amount, idempotencyKey, note, tags } = req.body;
 
     // Terminal Log
     console.log(`[API] Payment request received`);
@@ -97,7 +99,50 @@ const createPayment = async (req, res) => {
       });
     }
 
-    // 4. Create Payment record in MongoDB (Status: QUEUED)
+    // 3b. Transaction Limit Enforcement
+    const txLimit = await TransactionLimit.findOne({ userId: senderId });
+    if (txLimit) {
+      if (txLimit.perPaymentLimit > 0 && numAmount > txLimit.perPaymentLimit) {
+        return res.status(400).json({
+          error: `Payment exceeds your per-transaction limit of $${txLimit.perPaymentLimit.toFixed(2)}. Please send a smaller amount or ask an admin to adjust your limit.`,
+          code: 'LIMIT_EXCEEDED',
+          perPaymentLimit: txLimit.perPaymentLimit,
+          requestedAmount: numAmount,
+        });
+      }
+      if (txLimit.dailyLimit > 0) {
+        const startOfDay = new Date();
+        startOfDay.setHours(0, 0, 0, 0);
+        const todayAgg = await Payment.aggregate([
+          { $match: { senderId: new mongoose.Types.ObjectId(senderId), status: { $in: ['SUCCESS', 'QUEUED', 'PROCESSING'] }, createdAt: { $gte: startOfDay } } },
+          { $group: { _id: null, total: { $sum: '$amount' } } },
+        ]);
+        const dailyUsed = todayAgg[0]?.total ?? 0;
+        const remaining = txLimit.dailyLimit - dailyUsed;
+        if (dailyUsed + numAmount > txLimit.dailyLimit) {
+          return res.status(400).json({
+            error: `Payment would exceed your daily limit of $${txLimit.dailyLimit.toFixed(2)}. You have $${remaining.toFixed(2)} remaining today.`,
+            code: 'DAILY_LIMIT_EXCEEDED',
+            dailyLimit: txLimit.dailyLimit,
+            dailyUsed,
+            remaining,
+            requestedAmount: numAmount,
+          });
+        }
+      }
+    }
+
+    // 4. Validate and sanitize note/tags
+    const cleanNote = note && typeof note === 'string' ? note.trim().substring(0, 200) : null;
+    const PRESET_TAGS = ['College', 'Travel', 'Food', 'Essentials', 'Bills', 'Gift', 'Business'];
+    let cleanTags = [];
+    if (Array.isArray(tags)) {
+      cleanTags = [...new Set(
+        tags.map((t) => String(t).trim().substring(0, 30)).filter(Boolean)
+      )].slice(0, 5);
+    }
+
+    // 5. Create Payment record in MongoDB (Status: QUEUED)
     const payment = await Payment.create({
       senderId,
       recipientId: targetRecipientId,
@@ -106,6 +151,8 @@ const createPayment = async (req, res) => {
       idempotencyKey: cleanKey,
       status: 'QUEUED',
       attempts: 0,
+      note: cleanNote,
+      tags: cleanTags,
     });
 
     // 5. Add Job to BullMQ Queue (Redis)
@@ -196,6 +243,12 @@ const createPayment = async (req, res) => {
       }
     }
     console.error('createPayment error:', error);
+    if (isNetworkOrDbConnectionError(error)) {
+      return res.status(503).json({
+        error: 'Database connection failed. Please verify network connection.',
+        code: 'AUTH_DB_UNAVAILABLE',
+      });
+    }
     return res.status(500).json({ error: `Failed to enqueue payment: ${error.message}` });
   }
 };
@@ -243,6 +296,9 @@ const getPayments = async (req, res) => {
     });
   } catch (error) {
     console.error('getPayments error:', error);
+    if (isNetworkOrDbConnectionError(error)) {
+      return res.status(503).json({ error: 'Database connection lost.', code: 'AUTH_DB_UNAVAILABLE' });
+    }
     return res.status(500).json({ error: 'Failed to fetch payments' });
   }
 };
@@ -285,6 +341,9 @@ const getPaymentById = async (req, res) => {
     });
   } catch (error) {
     console.error('getPaymentById error:', error);
+    if (isNetworkOrDbConnectionError(error)) {
+      return res.status(503).json({ error: 'Database connection lost.', code: 'AUTH_DB_UNAVAILABLE' });
+    }
     return res.status(500).json({ error: 'Failed to fetch payment details' });
   }
 };
@@ -435,7 +494,47 @@ const getPaymentTrace = async (req, res) => {
     });
   } catch (error) {
     console.error('getPaymentTrace error:', error);
+    if (isNetworkOrDbConnectionError(error)) {
+      return res.status(503).json({ error: 'Database connection lost.', code: 'AUTH_DB_UNAVAILABLE' });
+    }
     return res.status(500).json({ error: 'Failed to fetch payment trace' });
+  }
+};
+
+/**
+ * PATCH /payments/:paymentId/note — update note + tags on own payment
+ */
+const updatePaymentNote = async (req, res) => {
+  try {
+    const { paymentId } = req.params;
+    const { note, tags } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(paymentId)) {
+      return res.status(400).json({ error: 'Invalid payment ID' });
+    }
+
+    const payment = await Payment.findById(paymentId);
+    if (!payment) return res.status(404).json({ error: 'Payment not found' });
+    if (payment.senderId.toString() !== req.user.userId && req.user.role !== 'ADMIN') {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const cleanNote = note !== undefined ? (note === null ? null : String(note).trim().substring(0, 200)) : payment.note;
+    let cleanTags = payment.tags;
+    if (Array.isArray(tags)) {
+      cleanTags = [...new Set(tags.map((t) => String(t).trim().substring(0, 30)).filter(Boolean))].slice(0, 5);
+    }
+
+    const updated = await Payment.findByIdAndUpdate(
+      paymentId,
+      { $set: { note: cleanNote, tags: cleanTags } },
+      { new: true }
+    );
+
+    return res.json({ message: 'Note updated', note: updated.note, tags: updated.tags });
+  } catch (error) {
+    console.error('updatePaymentNote error:', error);
+    return res.status(500).json({ error: 'Failed to update note' });
   }
 };
 
@@ -444,4 +543,5 @@ module.exports = {
   getPayments,
   getPaymentById,
   getPaymentTrace,
+  updatePaymentNote,
 };

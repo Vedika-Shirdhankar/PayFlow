@@ -4,6 +4,7 @@ const User = require('../models/User');
 const Wallet = require('../models/Wallet');
 const AuditLog = require('../models/AuditLog');
 const { validateEmail, validatePassword, validateName } = require('../utils/validation');
+const { isNetworkOrDbConnectionError } = require('../utils/errors');
 
 const generateToken = (user) => {
   return jwt.sign(
@@ -155,7 +156,13 @@ const login = async (req, res) => {
     });
   } catch (error) {
     console.error('Login error:', error);
-    return res.status(500).json({ error: 'Server error during login' });
+    if (isNetworkOrDbConnectionError(error)) {
+      return res.status(503).json({
+        error: 'Database connection failed. Please check your internet / network connection and try again.',
+        code: 'AUTH_DB_UNAVAILABLE',
+      });
+    }
+    return res.status(500).json({ error: error.message || 'Server error during login' });
   }
 };
 

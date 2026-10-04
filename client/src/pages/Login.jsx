@@ -20,7 +20,7 @@ const Login = () => {
       await login(email, password);
       navigate('/');
     } catch (err) {
-      setError(err.response?.data?.error || 'Invalid credentials');
+      setError(err.userMessage || err.response?.data?.error || 'Invalid credentials');
     } finally {
       setSubmitting(false);
     }

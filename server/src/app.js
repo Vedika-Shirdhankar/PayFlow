@@ -4,6 +4,8 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const mongoose = require('mongoose');
 const { checkRedisHealth } = require('./config/redis');
+const { getDatabaseHealth } = require('./config/db');
+const { tracingMiddleware } = require('./middleware/tracing');
 const WorkerHeartbeat = require('./models/WorkerHeartbeat');
 
 const authRoutes = require('./routes/authRoutes');
@@ -11,12 +13,14 @@ const walletRoutes = require('./routes/walletRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const userRoutes = require('./routes/userRoutes');
+const refundRoutes = require('./routes/refundRoutes');
 
 const app = express();
 
 app.use(helmet());
 app.use(cors({ origin: process.env.CLIENT_URL || 'http://localhost:5173' }));
 app.use(express.json({ limit: '50kb' }));
+app.use(tracingMiddleware);
 
 // Health check (registered before rate limiters so monitors are never throttled)
 app.get('/api/health', async (req, res) => {
@@ -81,6 +85,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/wallet', walletRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/refunds', refundRoutes);
 
 // 404 for unknown API routes
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
