@@ -63,8 +63,15 @@ router.get('/me/limits', authenticateToken, async (req, res) => {
   }
 });
 
-// PUT /api/users/me/limits - Set own transaction limits
+// PUT /api/users/me/limits - Set own transaction limits (Admin only)
 router.put('/me/limits', authenticateToken, async (req, res) => {
+  if (req.user.role !== 'ADMIN') {
+    return res.status(403).json({
+      error: 'Permission denied: Only administrators are authorized to set or modify payment limits.',
+      code: 'ADMIN_ONLY',
+    });
+  }
+
   try {
     const { perPaymentLimit, dailyLimit } = req.body;
     const update = {};

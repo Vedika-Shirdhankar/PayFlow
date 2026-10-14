@@ -4,7 +4,7 @@ import usePaymentEvents from '../hooks/usePaymentEvents';
 import {
   ShieldAlert, Users, Activity, Cpu, RefreshCw, AlertTriangle, Sliders,
   DollarSign, Clock, Zap, Play, Layers, CheckCircle2, XCircle, Database,
-  GitBranch, Wifi, WifiOff, Server, Timer, Flame, RotateCcw, Shield, RotateCw,
+  GitBranch, Wifi, WifiOff, Server, Timer, Flame, RotateCcw, Shield, RotateCw, Gauge,
 } from 'lucide-react';
 
 const StatusDot = ({ online }) => (
@@ -101,6 +101,13 @@ const AdminDashboardPage = () => {
   const [adjusting, setAdjusting] = useState(false);
   const [adjustMsg, setAdjustMsg] = useState('');
 
+  // Payment limit management
+  const [limitUserId, setLimitUserId] = useState('');
+  const [limitPerPayment, setLimitPerPayment] = useState('0');
+  const [limitDaily, setLimitDaily] = useState('0');
+  const [updatingLimits, setUpdatingLimits] = useState(false);
+  const [limitMsg, setLimitMsg] = useState('');
+
   const [replayingId, setReplayingId] = useState(null);
   const [replayMsg, setReplayMsg] = useState('');
   const [armingType, setArmingType] = useState(null);
@@ -147,8 +154,13 @@ const AdminDashboardPage = () => {
         simulateOutage: configRes.data.simulateOutage,
       });
 
-      if (usersRes.data.length > 0 && !selectedUserId) {
-        setSelectedUserId(usersRes.data[0].id);
+      if (usersRes.data.length > 0) {
+        if (!selectedUserId) setSelectedUserId(usersRes.data[0].id);
+        if (!limitUserId) {
+          setLimitUserId(usersRes.data[0].id);
+          setLimitPerPayment(String(usersRes.data[0].limits?.perPaymentLimit ?? 0));
+          setLimitDaily(String(usersRes.data[0].limits?.dailyLimit ?? 0));
+        }
       }
     } catch (err) {
       console.error('Error loading admin telemetry data:', err);
@@ -283,6 +295,46 @@ const AdminDashboardPage = () => {
     } finally {
       setAdjusting(false);
     }
+  };
+
+  const handleSelectLimitUser = (uid) => {
+    setLimitUserId(uid);
+    const u = users.find((user) => user.id === uid);
+    if (u && u.limits) {
+      setLimitPerPayment(String(u.limits.perPaymentLimit ?? 0));
+      setLimitDaily(String(u.limits.dailyLimit ?? 0));
+    } else {
+      setLimitPerPayment('0');
+      setLimitDaily('0');
+    }
+  };
+
+  const handleUpdateLimits = async (e) => {
+    e.preventDefault();
+    if (!limitUserId) return;
+    setUpdatingLimits(true);
+    setLimitMsg('');
+    try {
+      const res = await api.put(`/admin/users/${limitUserId}/limits`, {
+        perPaymentLimit: Number(limitPerPayment) || 0,
+        dailyLimit: Number(limitDaily) || 0,
+      });
+      setLimitMsg(`✅ Limits updated! Per-Payment: $${res.data.perPaymentLimit.toFixed(2)}, Daily: $${res.data.dailyLimit.toFixed(2)}`);
+      await fetchAdminData();
+      setTimeout(() => setLimitMsg(''), 4000);
+    } catch (err) {
+      setLimitMsg(`❌ ${err.response?.data?.error || 'Failed to update limits'}`);
+    } finally {
+      setUpdatingLimits(false);
+    }
+  };
+
+  const handleQuickSetLimit = (u) => {
+    setLimitUserId(u.id);
+    setLimitPerPayment(String(u.limits?.perPaymentLimit ?? 0));
+    setLimitDaily(String(u.limits?.dailyLimit ?? 0));
+    const el = document.getElementById('admin-limits-tool');
+    if (el) el.scrollIntoView({ behavior: 'smooth' });
   };
 
   if (loading) {
@@ -854,6 +906,68 @@ const AdminDashboardPage = () => {
         </form>
       </div>
 
+      {/* === ADMIN TRANSACTION LIMIT MANAGEMENT === */}
+      <div id="admin-limits-tool" className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4">
+        <div>
+          <h3 className="text-base font-bold text-white flex items-center gap-2">
+            <Gauge className="w-5 h-5 text-amber-400" />
+            Admin User Transaction Limit Management Tool
+          </h3>
+          <p className="text-xs text-slate-400">
+            Configure spending controls for any user. Non-admin users cannot alter their limits. Set to 0 to disable a limit.
+          </p>
+        </div>
+
+        {limitMsg && (
+          <div className="p-3 bg-slate-950 border border-slate-800 rounded-xl text-xs font-mono font-bold text-slate-200">
+            {limitMsg}
+          </div>
+        )}
+
+        <form onSubmit={handleUpdateLimits} className="grid grid-cols-1 md:grid-cols-4 gap-4 font-mono text-xs">
+          <div>
+            <label className="block text-slate-400 font-semibold mb-1">Target User</label>
+            <select
+              value={limitUserId}
+              onChange={(e) => handleSelectLimitUser(e.target.value)}
+              className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none"
+            >
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name} ({u.email})
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-slate-400 font-semibold mb-1">Per-Payment Limit ($)</label>
+            <input
+              type="number" min="0" step="0.01" required value={limitPerPayment}
+              onChange={(e) => setLimitPerPayment(e.target.value)}
+              placeholder="0 = no limit"
+              className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white font-bold focus:outline-none focus:border-amber-500"
+            />
+          </div>
+          <div>
+            <label className="block text-slate-400 font-semibold mb-1">Daily Limit ($)</label>
+            <input
+              type="number" min="0" step="0.01" required value={limitDaily}
+              onChange={(e) => setLimitDaily(e.target.value)}
+              placeholder="0 = no limit"
+              className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white font-bold focus:outline-none focus:border-purple-500"
+            />
+          </div>
+          <div className="flex items-end">
+            <button
+              type="submit" disabled={updatingLimits}
+              className="w-full py-2.5 px-4 bg-amber-600 hover:bg-amber-500 text-white font-bold rounded-xl transition-colors text-xs uppercase"
+            >
+              {updatingLimits ? 'Saving...' : 'Set Limits'}
+            </button>
+          </div>
+        </form>
+      </div>
+
       {/* === ALL USERS === */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
         <h3 className="text-base font-bold text-white mb-4 flex items-center gap-2">
@@ -869,6 +983,9 @@ const AdminDashboardPage = () => {
                 <th className="pb-3 px-3">Email</th>
                 <th className="pb-3 px-3">Role</th>
                 <th className="pb-3 px-3">Wallet Balance</th>
+                <th className="pb-3 px-3">Per-Payment Limit</th>
+                <th className="pb-3 px-3">Daily Limit</th>
+                <th className="pb-3 px-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
@@ -883,6 +1000,21 @@ const AdminDashboardPage = () => {
                     </span>
                   </td>
                   <td className="py-3 px-3 text-emerald-400 font-bold">${(u.wallet?.balance || 0).toFixed(2)}</td>
+                  <td className="py-3 px-3 text-amber-300 font-semibold">
+                    {u.limits?.perPaymentLimit > 0 ? `$${u.limits.perPaymentLimit.toFixed(2)}` : <span className="text-slate-500 font-normal">None</span>}
+                  </td>
+                  <td className="py-3 px-3 text-purple-300 font-semibold">
+                    {u.limits?.dailyLimit > 0 ? `$${u.limits.dailyLimit.toFixed(2)}` : <span className="text-slate-500 font-normal">None</span>}
+                  </td>
+                  <td className="py-3 px-3 text-right">
+                    <button
+                      type="button"
+                      onClick={() => handleQuickSetLimit(u)}
+                      className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-amber-300 hover:text-white rounded-lg text-xs font-semibold transition-colors"
+                    >
+                      Set Limits
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>

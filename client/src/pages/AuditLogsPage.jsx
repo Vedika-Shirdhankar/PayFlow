@@ -39,6 +39,7 @@ const AuditLogsPage = () => {
     'WORKER_FAILURE',
     'WORKER_RECOVERY',
     'SYSTEM_CONFIG_UPDATE',
+    'LIMIT_UPDATE',
   ];
 
   return (

@@ -22,6 +22,8 @@ const {
 const { adminWalletAdjustment } = require('../controllers/walletController');
 const { getAllRefunds, approveRefund, rejectRefund } = require('../controllers/refundController');
 const TransactionLimit = require('../models/TransactionLimit');
+const User = require('../models/User');
+const AuditLog = require('../models/AuditLog');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 
 router.get('/stats', authenticateToken, requireAdmin, getStats);
@@ -74,15 +76,60 @@ router.get('/users/:userId/limits', authenticateToken, requireAdmin, async (req,
 });
 router.put('/users/:userId/limits', authenticateToken, requireAdmin, async (req, res) => {
   try {
+    const { userId } = req.params;
+    const targetUser = await User.findById(userId);
+    if (!targetUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
     const { perPaymentLimit, dailyLimit } = req.body;
     const update = {};
-    if (perPaymentLimit !== undefined) update.perPaymentLimit = Math.max(0, Number(perPaymentLimit));
-    if (dailyLimit !== undefined) update.dailyLimit = Math.max(0, Number(dailyLimit));
+    if (perPaymentLimit !== undefined) {
+      const val = Number(perPaymentLimit);
+      if (isNaN(val) || val < 0) return res.status(400).json({ error: 'perPaymentLimit must be a non-negative number (0 = no limit)' });
+      update.perPaymentLimit = val;
+    }
+    if (dailyLimit !== undefined) {
+      const val = Number(dailyLimit);
+      if (isNaN(val) || val < 0) return res.status(400).json({ error: 'dailyLimit must be a non-negative number (0 = no limit)' });
+      update.dailyLimit = val;
+    }
+
     const limits = await TransactionLimit.findOneAndUpdate(
-      { userId: req.params.userId }, { $set: update }, { upsert: true, new: true }
+      { userId },
+      { $set: update },
+      { upsert: true, new: true }
     );
-    return res.json({ message: 'Limits updated', perPaymentLimit: limits.perPaymentLimit, dailyLimit: limits.dailyLimit });
-  } catch (e) { return res.status(500).json({ error: 'Failed to update limits' }); }
+
+    try {
+      await AuditLog.create({
+        actorId: req.user.userId,
+        actorRole: req.user.role,
+        action: 'LIMIT_UPDATE',
+        entityType: 'TransactionLimit',
+        entityId: limits._id ? limits._id.toString() : userId,
+        metadata: {
+          targetUserId: userId,
+          targetUserEmail: targetUser.email,
+          perPaymentLimit: limits.perPaymentLimit,
+          dailyLimit: limits.dailyLimit,
+          updatedBy: req.user.email,
+        },
+      });
+    } catch (auditErr) {
+      console.warn('AuditLog creation failed for limit update:', auditErr.message);
+    }
+
+    return res.json({
+      message: 'Transaction limits updated successfully',
+      userId,
+      perPaymentLimit: limits.perPaymentLimit,
+      dailyLimit: limits.dailyLimit,
+    });
+  } catch (e) {
+    console.error('Error updating user limits:', e);
+    return res.status(500).json({ error: 'Failed to update limits' });
+  }
 });
 
 module.exports = router;

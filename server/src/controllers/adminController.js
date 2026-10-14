@@ -3,6 +3,7 @@ const Wallet = require('../models/Wallet');
 const Payment = require('../models/Payment');
 const PaymentJob = require('../models/PaymentJob');
 const AuditLog = require('../models/AuditLog');
+const TransactionLimit = require('../models/TransactionLimit');
 const SystemConfig = require('../models/SystemConfig');
 const WorkerHeartbeat = require('../models/WorkerHeartbeat');
 const { getQueueStats, getDeadLetterQueue, replayPaymentJob } = require('../queue/paymentQueue');
@@ -78,10 +79,16 @@ const getUsers = async (req, res) => {
   try {
     const users = await User.find().select('-passwordHash').sort({ createdAt: -1 });
     const wallets = await Wallet.find();
+    const limits = await TransactionLimit.find();
 
     const walletMap = {};
     wallets.forEach((w) => {
       walletMap[w.userId.toString()] = w;
+    });
+
+    const limitMap = {};
+    limits.forEach((l) => {
+      limitMap[l.userId.toString()] = l;
     });
 
     const userList = users.map((u) => ({
@@ -97,6 +104,12 @@ const getUsers = async (req, res) => {
             currency: walletMap[u._id.toString()].currency,
           }
         : null,
+      limits: limitMap[u._id.toString()]
+        ? {
+            perPaymentLimit: limitMap[u._id.toString()].perPaymentLimit,
+            dailyLimit: limitMap[u._id.toString()].dailyLimit,
+          }
+        : { perPaymentLimit: 0, dailyLimit: 0 },
     }));
 
     return res.json(userList);
